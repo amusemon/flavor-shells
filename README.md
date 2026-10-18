@@ -25,4 +25,4 @@ curl -O $AFS_BASE/generate_icons.sh \
 2. 프로젝트에 맞는 flavor 이름을 수정해서 사용합니다.
     - `flavor_common.sh - ALLOWED_FLAVORS`
 3. 빌드된 파일을 저장하는 위치를 변경합니다.
-    - `build_archive.sh - EXPORT_ROOT="../../_export/amusemonapps-$FLAVOR"`
+    - `build_archive.sh - EXPORT_ROOT="../../_export/{앱 이름}-$FLAVOR"`
