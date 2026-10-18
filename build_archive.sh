@@ -4,20 +4,25 @@ set -e
 # =========================
 # 설명:
 #   - 앱을 빌드하고, _export 폴더로 복사합니다.
-#   - 빌드번호를 확인합니다.
-#     - android: android/app/build.gradle.kts/의 'versionCode'
-#     - ios: ios/Flutter/AppBuildConfig.xcconfig의 'VERSION_CODE'
+#   - 릴리스 빌드에는 Dart 난독화를 적용하고 심볼을 저장합니다.
+#   - 빌드번호 확인 위치:
+#     - 안드로이드: android/app/build.gradle.kts의 versionCode
+#     - iOS: ios/Flutter/AppBuildConfig.xcconfig의 VERSION_CODE
+#
 # 사용방법:
-#   $ sh build_archive.sh {flavor name} {extension name}
+#   bash build_archive.sh {flavor 이름} {확장자}
+#
+# 예시:
+#   bash build_archive.sh dev aab
 # =========================
 
 # =========================
-# flavor 확인
+# 빌드 환경 확인
 # =========================
 source ./flavor_common.sh
 
 # =========================
-# extension check
+# 확장자 확인
 # =========================
 ALLOWED_EXTENSIONS=(
   "apk"
@@ -29,123 +34,133 @@ ALLOWED_EXTENSIONS=(
 EXTENSION=$2
 
 if [ -z "$EXTENSION" ]; then
-  echo "❌ 파일 확장자를 입력하세요"
+  echo "❌ 파일 확장자를 입력하세요."
   echo "💡 사용 가능: ${ALLOWED_EXTENSIONS[*]}"
   exit 1
 fi
 
-# Whitelist check
+# 허용된 확장자인지 확인
 is_valid_extension=false
+
 for f in "${ALLOWED_EXTENSIONS[@]}"; do
-  if [ "$f" == "$EXTENSION" ]; then
+  if [ "$f" = "$EXTENSION" ]; then
     is_valid_extension=true
     break
   fi
 done
 
 if [ "$is_valid_extension" != true ]; then
-  echo "❌ 허용되지 않은 확장자 입니다.: $EXTENSION"
+  echo "❌ 허용되지 않은 확장자입니다: $EXTENSION"
   echo "💡 사용 가능: ${ALLOWED_EXTENSIONS[*]}"
   exit 1
 fi
 
 # =========================
-# 버전 확인(VERSION_CODE)
+# 빌드번호 확인
 # =========================
 if [ "$EXTENSION" = "apk" ] || [ "$EXTENSION" = "aab" ]; then
-    echo "🎯 Detected Android platform (EXTENSION: $EXTENSION)."
-    source ./version_code.sh android
-    if [ $? -ne 0 ]; then
-        echo "❌ EError: Failed to source version_code.sh for Android." >&2
-        return 1
-    fi
+  echo "🎯 안드로이드 빌드번호를 확인합니다: $EXTENSION"
+  source ./version_code.sh android
 elif [ "$EXTENSION" = "ios" ] || [ "$EXTENSION" = "ipa" ]; then
-    echo "🎯 Detected iOS platform (EXTENSION: $EXTENSION)."
-    source ./version_code.sh ios
-    if [ $? -ne 0 ]; then
-        echo "❌ Error: Failed to source version_code.sh for iOS." >&2
-        return 1
-    fi
-else
-    echo "❌ Error: Invalid or unsupported EXTENSION value: '$EXTENSION'. Expected 'apk', 'aab', 'ios', or 'ipa'." >&2
-    return 1
+  echo "🎯 iOS 빌드번호를 확인합니다: $EXTENSION"
+  source ./version_code.sh ios
 fi
 
 # =========================
-# copy
+# 빌드 환경별 설정 파일 복사
 # =========================
 cp -R "$FLAVOR_YAML" "$MAIN_YAML"
 
 # =========================
-# package get
+# 패키지 가져오기
 # =========================
-echo "💼 Package를 가져옵니다."
+echo "💼 패키지를 가져옵니다."
 flutter pub get
 
 # =========================
-# build mode & command 설정
+# 빌드 모드 및 명령 설정
 # =========================
 BUILD_MODE="release"
-BUILD_CMD=$EXTENSION
+BUILD_CMD="$EXTENSION"
 
-if [ "$EXTENSION" == "apk" ]; then
+if [ "$EXTENSION" = "apk" ]; then
   BUILD_MODE="debug"
-  echo "🛠 apk는 Debug 모드로 빌드합니다."
-elif [ "$EXTENSION" == "aab" ]; then
+  echo "🛠 apk는 디버그 모드로 빌드합니다."
+elif [ "$EXTENSION" = "aab" ]; then
   BUILD_CMD="appbundle"
-  echo "📦 aab(appbundle)는 Release 모드로 빌드합니다."
+  echo "📦 aab는 릴리스 모드로 빌드합니다."
 else
-  echo "🚀 ${EXTENSION}는 Release 모드로 빌드합니다."
+  echo "🚀 ${EXTENSION}는 릴리스 모드로 빌드합니다."
 fi
 
 # =========================
-# build 실행
+# 내보내기 경로 준비
 # =========================
-echo "🚀 Build for flavor: $FLAVOR ($BUILD_MODE)"
+# 프로젝트 루트의 두 단계 위에 생성
+EXPORT_ROOT="../../_export/mall-$FLAVOR"
+mkdir -p "$EXPORT_ROOT"
 
-# apk는 --debug, 나머지는 --release 옵션을 명시적으로 부여
-flutter build $BUILD_CMD --$BUILD_MODE --flavor $FLAVOR --dart-define=FLAVOR=$FLAVOR
+# =========================
+# 릴리스 빌드 난독화 옵션 설정
+# =========================
+BUILD_OPTION=()
+
+if [ "$BUILD_MODE" = "release" ]; then
+  SYMBOLS_DIR="$EXPORT_ROOT/symbols/${EXTENSION}_${VERSION_CODE}"
+  mkdir -p "$SYMBOLS_DIR"
+
+  BUILD_OPTION=(
+    "--obfuscate"
+    "--split-debug-info=$SYMBOLS_DIR"
+  )
+
+  echo "🔐 Dart 난독화를 적용합니다."
+  echo "🗂 심볼 저장 경로: $SYMBOLS_DIR"
+fi
+
+# =========================
+# 빌드 실행
+# =========================
+echo "🚀 빌드 대상: $FLAVOR ($BUILD_MODE)"
+
+flutter build "$BUILD_CMD" "--$BUILD_MODE" \
+  --flavor "$FLAVOR" \
+  "--dart-define=FLAVOR=$FLAVOR" \
+  "${BUILD_OPTION[@]}"
 
 echo "✅ 빌드가 완료되었습니다: $FLAVOR (.$EXTENSION - $BUILD_MODE)"
 
 # =========================
-# Export (파일 복사 로직)
+# 빌드 결과물 내보내기
 # =========================
 echo "📂 빌드 파일을 내보내는 중..."
 
-# 1. 대상 디렉토리 설정 (프로젝트 루트의 2단계 위 _export/mall-{flavor})
-EXPORT_ROOT="../../_export/mall-$FLAVOR"
-mkdir -p "$EXPORT_ROOT"
-
-# 2. 확장자별 소스 파일 경로 설정
 SOURCE_PATH=""
 EXPORT_PATH=""
 
-case $EXTENSION in
+case "$EXTENSION" in
   "apk")
-    # 빌드된 Debug APK 경로
+    # 디버그 APK 경로
     SOURCE_PATH="build/app/outputs/flutter-apk/app-$FLAVOR-debug.apk"
     EXPORT_PATH="$EXPORT_ROOT/app-$FLAVOR-debug($VERSION_CODE).apk"
     ;;
   "aab")
-    # 빌드된 Release AAB 경로
-    # Flavor의 첫 글자를 대문자로 변환하여 경로 매칭 (예: dev -> devRelease)
-    FLAVOR_CAPITALIZED="$(tr '[:lower:]' '[:upper:]' <<< ${FLAVOR:0:1})${FLAVOR:1}"
+    # 릴리스 AAB 경로
     SOURCE_PATH="build/app/outputs/bundle/${FLAVOR}Release/app-$FLAVOR-release.aab"
     EXPORT_PATH="$EXPORT_ROOT/app-$FLAVOR-release($VERSION_CODE).aab"
     ;;
   "ipa")
-    # 빌드된 Release IPA 경로
+    # 릴리스 IPA 경로
     SOURCE_PATH="build/ios/ipa/*.ipa"
     EXPORT_PATH="$EXPORT_ROOT/app-$FLAVOR-release($VERSION_CODE).ipa"
     ;;
   "ios")
-    echo "⚠️ 'ios' 확장자는 Framework/Archive 결과물이므로 파일 복사를 건너뜁니다 (ipa를 사용하세요)."
+    echo "⚠️ ios 빌드는 파일 복사를 건너뜁니다. 파일 내보내기는 ipa를 사용하세요."
     exit 0
     ;;
 esac
 
-# 3. 파일 복사 실행
+# IPA 와일드카드가 확장되도록 소스 경로를 처리
 if ls $SOURCE_PATH 1> /dev/null 2>&1; then
   cp $SOURCE_PATH "$EXPORT_PATH"
   echo "📦 성공적으로 복사되었습니다: $EXPORT_PATH"
